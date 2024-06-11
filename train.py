@@ -1,7 +1,11 @@
-import torch
-from torch.utils.data import TensorDataset, DataLoader
-from model import MLP
+import matplotlib.pyplot as plt
+import os
 import pickle
+import torch
+
+from torch.utils.data import TensorDataset, DataLoader
+from torch.utils.tensorboard import SummaryWriter
+from model import MLP
 
 def load_training_data(filename):
     with open(filename, 'rb') as f:
@@ -31,89 +35,133 @@ def create_dataloader(input_data, data_y, batch_size=100):
     dataloader = DataLoader(dataset, batch_size=batch_size, shuffle=True)
     return dataloader
 
-def train_model(model, dataloader, optimizer, lossfun, epochs=1):
+def train_model(model, dataloader, optimizer, lossfun, epochs=1, writer=None):
     for epoch in range(epochs):
-        for input, target in dataloader:
+        for batch_idx, (input, target) in enumerate(dataloader):
             optimizer.zero_grad()
             outputs = model(input)
-            loss = lossfun(target, outputs)
+            loss = lossfun(outputs, target)
             loss.backward()
             optimizer.step()
+
+            if writer:
+                writer.add_scalar('Training Loss', loss.item(), epoch)
+
+                if epoch % 10 == 0:
+                    plot_reconstructions_to_tensorboard(writer, input, target,
+                                                        model, epoch,
+                                                        prefix='Initial_')
 
         with torch.autograd.no_grad():
             print(f"Epoch {epoch + 1}/{epochs}\tTraining Loss: {loss.item():.6f}")
 
-def train_model_with_physics(model, input_data, data_y, x_grid, t_grid, optimizer, epochs=1, lambda_weight=0.5):
+def train_model_with_physics(model, input_data, data_y, x_grid, t_grid, optimizer, epochs=1, lambda_weight=0.5, writer=None):
     for epoch in range(epochs):
         optimizer.zero_grad()
 
         yh = model(input_data)
-        loss1 = torch.mean((yh - data_y)**2)
+        loss1 = torch.mean((yh - data_y) ** 2)
 
-        dxr  = torch.autograd.grad(yh[:, :, 0], x_grid, torch.ones_like(yh[:, :, 0]), create_graph=True)[0]
-        dxxr = torch.autograd.grad(dxr, x_grid, torch.ones_like(dxr), create_graph=True)[0]
-        dtr  = torch.autograd.grad(yh[:, :, 0], t_grid, torch.ones_like(yh[:, :, 0]), create_graph=True)[0]
-        dxr  = dxr[:, :, 0]
-        dxxr = dxxr[:, :, 0]
-        dtr  = dtr[:, :, 0]
+        dxr = torch.autograd.grad(outputs=yh[:, :, 0], inputs=x_grid, grad_outputs=torch.ones_like(yh[:, :, 0]), create_graph=True)[0]
+        dxxr = torch.autograd.grad(outputs=dxr, inputs=x_grid, grad_outputs=torch.ones_like(dxr), create_graph=True)[0]
+        dtr = torch.autograd.grad(outputs=yh[:, :, 0], inputs=t_grid, grad_outputs=torch.ones_like(yh[:, :, 0]), create_graph=True)[0]
+        dxr, dxxr, dtr = dxr[:, :, 0], dxxr[:, :, 0], dtr[:, :, 0]
 
-        dxi  = torch.autograd.grad(yh[:, :, 1], x_grid, torch.ones_like(yh[:, :, 1]), create_graph=True)[0]
-        dxxi = torch.autograd.grad(dxi, x_grid, torch.ones_like(dxi), create_graph=True)[0]
-        dti  = torch.autograd.grad(yh[:, :, 1], t_grid, torch.ones_like(yh[:, :, 1]), create_graph=True)[0]
-        dxi  = dxi[:, :, 0]
-        dxxi = dxxi[:, :, 0]
-        dti  = dti[:, :, 0]
+        dxi = torch.autograd.grad(outputs=yh[:, :, 1], inputs=x_grid, grad_outputs=torch.ones_like(yh[:, :, 1]), create_graph=True)[0]
+        dxxi = torch.autograd.grad(outputs=dxi, inputs=x_grid, grad_outputs=torch.ones_like(dxi), create_graph=True)[0]
+        dti = torch.autograd.grad(outputs=yh[:, :, 1], inputs=t_grid, grad_outputs=torch.ones_like(yh[:, :, 1]), create_graph=True)[0]
+        dxi, dxxi, dti = dxi[:, :, 0], dxxi[:, :, 0], dti[:, :, 0]
 
-        sqr = yh[:, :, 0]**2 + yh[:, :, 1]**2
+        sqr = yh[:, :, 0] ** 2 + yh[:, :, 1] ** 2
 
         physicsr = dtr - model.p1 * yh[:, :, 0] + model.p2 * dxr + model.p3 * (dxxr - model.p4 * dxxi) - model.p5 * sqr * (yh[:, :, 0] - model.p6 * yh[:, :, 1])
         physicsi = dti - model.p1 * yh[:, :, 1] + model.p2 * dxi + model.p3 * (dxxi + model.p4 * dxxr) - model.p5 * sqr * (yh[:, :, 1] + model.p6 * yh[:, :, 0])
         physics = physicsr + physicsi
-        loss2 = lambda_weight * torch.mean((physics)**2)
+        loss2 = lambda_weight * torch.mean((physics) ** 2)
 
         loss = loss1 + loss2
         loss.backward()
         optimizer.step()
 
-        with torch.autograd.no_grad():
-            print(f"Epoch {epoch + 1}/{epochs}\tData Loss: {loss1.item():.6f}\tPDE Loss: {loss2.item():.6f}\tTraining Loss: {loss.item():.6f}")
+        if writer:
+            writer.add_scalar('Data Loss', loss1.item(), epoch)
+            writer.add_scalar('PDE Loss', loss2.item(), epoch)
+            writer.add_scalar('Total Loss', loss.item(), epoch)
 
+            # Log parameters p1 to p6
+            writer.add_scalar('Parameters/p1', model.p1.item(), epoch)
+            writer.add_scalar('Parameters/p2', model.p2.item(), epoch)
+            writer.add_scalar('Parameters/p3', model.p3.item(), epoch)
+            writer.add_scalar('Parameters/p4', model.p4.item(), epoch)
+            writer.add_scalar('Parameters/p5', model.p5.item(), epoch)
+            writer.add_scalar('Parameters/p6', model.p6.item(), epoch)
+
+            if epoch % 10 == 0:  # Save reconstructions every 10 epochs
+                plot_reconstructions_to_tensorboard(writer, input_data,
+                                                    data_y, model, epoch,
+                                                    prefix='Physics_')
+
+        with torch.autograd.no_grad():
+            print(f"Epoch {epoch + 1}/{epochs}\tData Loss: {loss1.item():.6f}\tPDE Loss: {loss2.item():.6f}\tTotal Loss: {loss.item():.6f}")
+
+        torch.cuda.empty_cache()
+
+def plot_reconstructions_to_tensorboard(writer, input_data, data_y, model, epoch, prefix=''):
+    with torch.no_grad():
+        yh = model(input_data)
+        fig, ax = plt.subplots(1, 2, figsize=(10, 5))
+        ax[0].imshow(data_y[:, :, 0].cpu(), aspect='auto', origin='lower')
+        ax[0].set_title('True Real Part')
+        ax[1].imshow(yh[:, :, 0].cpu(), aspect='auto', origin='lower')
+        ax[1].set_title('Predicted Real Part')
+        plt.suptitle(f'{prefix} Epoch {epoch}')
+        writer.add_figure(f'{prefix}Reconstructions', fig, global_step=epoch)
+        plt.close(fig)
+
+def get_next_log_dir(base_dir='./logs'):
+    existing_dirs = os.listdir(base_dir)
+    existing_ints = [int(d.split('_')[-1]) for d in existing_dirs if d.split('_')[-1].isdigit()]
+    next_int = max(existing_ints, default=0) + 1
+    return f'{base_dir}/run_{next_int}'
 
 if __name__ == "__main__":
-    # Parameters
+
     interval = 100
     input_dim = 2
     hidden_layers = [128] * 6
     output_dim = 2
-    batch_size = 1
+    batch_size = 10
     learning_rate = 1e-4
-    initial_epochs = 1  # Initial training with MSE loss
-    physics_epochs = 5  # Further training with physics-informed loss
+    initial_epochs = 30  # Initial training with MSE loss
+    physics_epochs = 20  # Further training with physics-informed loss
     lambda_weight = 0.5
 
-    # Load training data
     training_data_file = './datasets/training_data.pkl'
     training_data = load_training_data(training_data_file)
 
-    # Assuming you want to use the first dataset entry for training
     params, rout, iout = training_data[0]
     N = rout.shape[0]
 
-    # Generate the data
     input_data, data_y, x_grid, t_grid = generate_data_for_net(rout, iout, interval, N)
-
-    # Create DataLoader
     dataloader = create_dataloader(input_data, data_y, batch_size)
 
-    # Define the network
     model = MLP([input_dim] + hidden_layers + [output_dim])
     optimizer = torch.optim.Adam(model.parameters(), lr=learning_rate)
     lossfun = torch.nn.MSELoss()
 
-    # Initial training with MSE loss
-    print("Starting initial training with MSE loss...")
-    train_model(model, dataloader, optimizer, lossfun, epochs=initial_epochs)
+    # Create a unique log directory
+    log_dir = get_next_log_dir()
+    writer = SummaryWriter(log_dir=log_dir)
 
-    #  Further training with physics-informed loss
+    print("Starting initial training with MSE loss...")
+    train_model(model, dataloader, optimizer, lossfun, epochs=initial_epochs, writer=writer)
+
     print("Starting further training with physics-informed loss...")
-    train_model_with_physics(model, input_data, data_y, x_grid, t_grid, optimizer, epochs=physics_epochs, lambda_weight=lambda_weight)
+    train_model_with_physics(model, input_data, data_y, x_grid, t_grid, optimizer, epochs=physics_epochs, lambda_weight=lambda_weight, writer=writer)
+
+    writer.close()
+
+    model_save_path = './models'
+    os.makedirs(model_save_path, exist_ok=True)
+    torch.save(model.state_dict(), os.path.join(model_save_path, 'model.pth'))
+
