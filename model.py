@@ -43,3 +43,26 @@ class MLP(torch.nn.Module):
         output = self.layers[-1](h)
         return output
 
+    @property
+    def p1(self):
+        return self.params[0]
+
+    @property
+    def p2(self):
+        return self.params[1]
+
+    @property
+    def p3(self):
+        return self.params[2]
+
+    @property
+    def p4(self):
+        return self.params[3]
+
+    @property
+    def p5(self):
+        return self.params[4]
+
+    @property
+    def p6(self):
+        return self.params[5]
