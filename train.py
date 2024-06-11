@@ -2,7 +2,6 @@ import matplotlib.pyplot as plt
 import os
 import pickle
 import torch
-
 from torch.utils.data import TensorDataset, DataLoader
 from torch.utils.tensorboard import SummaryWriter
 from model import MLP
@@ -36,6 +35,9 @@ def create_dataloader(input_data, data_y, batch_size=100):
     return dataloader
 
 def train_model(model, dataloader, optimizer, lossfun, epochs=1, writer=None):
+    # Save a specific batch for consistent visualization
+    fixed_input, fixed_target = next(iter(dataloader))
+
     for epoch in range(epochs):
         for batch_idx, (input, target) in enumerate(dataloader):
             optimizer.zero_grad()
@@ -47,10 +49,11 @@ def train_model(model, dataloader, optimizer, lossfun, epochs=1, writer=None):
             if writer:
                 writer.add_scalar('Training Loss', loss.item(), epoch)
 
-                if epoch % 10 == 0:
-                    plot_reconstructions_to_tensorboard(writer, input, target,
-                                                        model, epoch,
-                                                        prefix='Initial_')
+                if epoch % 10 == 0:  # Save reconstructions every 10 epochs
+                    with torch.no_grad():
+                        yh = model(fixed_input)
+                        plot_reconstructions_to_tensorboard(writer, fixed_target, yh, epoch, prefix='Initial_')
+                        plot_individual_time_steps_to_tensorboard(writer, fixed_target, yh, epoch, prefix='Initial_')
 
         with torch.autograd.no_grad():
             print(f"Epoch {epoch + 1}/{epochs}\tTraining Loss: {loss.item():.6f}")
@@ -97,26 +100,38 @@ def train_model_with_physics(model, input_data, data_y, x_grid, t_grid, optimize
             writer.add_scalar('Parameters/p6', model.p6.item(), epoch)
 
             if epoch % 10 == 0:  # Save reconstructions every 10 epochs
-                plot_reconstructions_to_tensorboard(writer, input_data,
-                                                    data_y, model, epoch,
-                                                    prefix='Physics_')
+                plot_reconstructions_to_tensorboard(writer, data_y, yh, epoch, prefix='Physics_')
+                plot_individual_time_steps_to_tensorboard(writer, data_y, yh, epoch, prefix='Physics_')
 
         with torch.autograd.no_grad():
             print(f"Epoch {epoch + 1}/{epochs}\tData Loss: {loss1.item():.6f}\tPDE Loss: {loss2.item():.6f}\tTotal Loss: {loss.item():.6f}")
 
         torch.cuda.empty_cache()
 
-def plot_reconstructions_to_tensorboard(writer, input_data, data_y, model, epoch, prefix=''):
+def plot_reconstructions_to_tensorboard(writer, data_y, yh, epoch, prefix=''):
     with torch.no_grad():
-        yh = model(input_data)
         fig, ax = plt.subplots(1, 2, figsize=(10, 5))
-        ax[0].imshow(data_y[:, :, 0].cpu(), aspect='auto', origin='lower')
-        ax[0].set_title('True Real Part')
-        ax[1].imshow(yh[:, :, 0].cpu(), aspect='auto', origin='lower')
-        ax[1].set_title('Predicted Real Part')
+        true_intensity = (data_y[:, :, 0]**2 + data_y[:, :, 1]**2).cpu().numpy()
+        pred_intensity = (yh[:, :, 0]**2 + yh[:, :, 1]**2).cpu().numpy()
+        ax[0].imshow(true_intensity, aspect='auto', origin='lower')
+        ax[0].set_title('True Intensity')
+        ax[1].imshow(pred_intensity, aspect='auto', origin='lower')
+        ax[1].set_title('Predicted Intensity')
         plt.suptitle(f'{prefix} Epoch {epoch}')
         writer.add_figure(f'{prefix}Reconstructions', fig, global_step=epoch)
         plt.close(fig)
+
+def plot_individual_time_steps_to_tensorboard(writer, data_y, yh, epoch, prefix=''):
+    t = 1
+    fig, ax = plt.subplots(1, 1, figsize=(10, 5))
+    true_intensity = (data_y[t, :, 0]**2 + data_y[t, :, 1]**2).cpu().numpy()
+    pred_intensity = (yh[t, :, 0]**2 + yh[t, :, 1]**2).detach().cpu().numpy()  # Detach from computation graph
+    ax.plot(true_intensity, label='True Intensity')
+    ax.plot(pred_intensity, label='Predicted Intensity')
+    ax.legend()
+    plt.suptitle(f'{prefix} Time Step {t}, Epoch {epoch}')
+    writer.add_figure(f'{prefix}Time_Step_{t}', fig, global_step=epoch)
+    plt.close(fig)
 
 def get_next_log_dir(base_dir='./logs'):
     existing_dirs = os.listdir(base_dir)
@@ -124,17 +139,31 @@ def get_next_log_dir(base_dir='./logs'):
     next_int = max(existing_ints, default=0) + 1
     return f'{base_dir}/run_{next_int}'
 
-if __name__ == "__main__":
+def log_hyperparameters(writer, hparams, metrics):
+    writer.add_hparams(hparams, metrics)
 
-    interval = 100
+if __name__ == "__main__":
+    interval = 40
     input_dim = 2
     hidden_layers = [128] * 6
     output_dim = 2
     batch_size = 10
-    learning_rate = 1e-4
-    initial_epochs = 30  # Initial training with MSE loss
-    physics_epochs = 20  # Further training with physics-informed loss
+    learning_rate = 1e-5
+    initial_epochs = 1000  # Initial training with MSE loss
+    physics_epochs = 1000  # Further training with physics-informed loss
     lambda_weight = 0.5
+
+    hparams = {
+        'interval': interval,
+        'input_dim': input_dim,
+        'hidden_layers': torch.Tensor(hidden_layers),
+        'output_dim': output_dim,
+        'batch_size': batch_size,
+        'learning_rate': learning_rate,
+        'initial_epochs': initial_epochs,
+        'physics_epochs': physics_epochs,
+        'lambda_weight': lambda_weight
+    }
 
     training_data_file = './datasets/training_data.pkl'
     training_data = load_training_data(training_data_file)
@@ -152,6 +181,9 @@ if __name__ == "__main__":
     # Create a unique log directory
     log_dir = get_next_log_dir()
     writer = SummaryWriter(log_dir=log_dir)
+
+    # Log the hyperparameters without metrics
+    writer.add_hparams(hparams, {})
 
     print("Starting initial training with MSE loss...")
     train_model(model, dataloader, optimizer, lossfun, epochs=initial_epochs, writer=writer)
