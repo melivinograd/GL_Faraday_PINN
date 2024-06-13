@@ -4,9 +4,10 @@ import os
 import pickle
 
 class GinzburgLandauIntegrator:
-    def __init__(self, N, dt, params=None, x_lim=np.pi):
+    def __init__(self, N, dt, params=None, x_lim=np.pi, save_interval=1):
         self.N = N
         self.dt = dt
+        self.save_interval = save_interval
         self.params = params
         self.k = np.fft.rfftfreq(N, 1.0/N)  # Use rfftfreq for real FFT
         self.x = np.linspace(-x_lim, x_lim, N, endpoint=False)
@@ -18,8 +19,9 @@ class GinzburgLandauIntegrator:
 
 
     def initialize_fields(self, noise_amplitude=0.0, shape='periodic'):
-        self.rout = np.zeros((self.N, int(steps)))
-        self.iout = np.zeros((self.N, int(steps)))
+        self.num_saves = steps // self.save_interval
+        self.rout = np.zeros((self.N, self.num_saves))
+        self.iout = np.zeros((self.N, self.num_saves))
 
         if shape == "uniform":
             base_r = np.ones(self.N) * 0.1
@@ -84,11 +86,41 @@ class GinzburgLandauIntegrator:
         iout = np.fft.irfft(imf, n=self.N)
         return rout, iout
 
+    #  def integrate(self, steps):
+        #  for i in range(int(steps) - 1):  # Temporal evolution
+            #  if i % 1000 == 0:
+                #  print(f'Step={i}/{steps} {i/steps*100:.2f}%')
+            #  self.rout[:, i + 1], self.iout[:, i + 1] = self.evolve(self.rout[:, i], self.iout[:, i])
+        #  return self.rout, self.iout
+
+    #  def integrate(self, steps):
+        #  temp_rout = self.rout[:, 0]
+        #  temp_iout = self.iout[:, 0]
+
+        #  for i in range(steps-1):
+            #  if i % 100 == 0:
+                #  print(f'Step={i}')
+            #  temp_rout, temp_iout = self.evolve(temp_rout, temp_iout)
+            #  if i % self.save_interval == 0:
+                #  self.rout[:, i + 1], self.iout[:, i + 1] = temp_rout, temp_iout
+
+            #  return self.rout, self.iout
+
     def integrate(self, steps):
-        for i in range(int(steps) - 1):  # Temporal evolution
-            if i % 1000 == 0:
-                print(f'Step={i}/{steps} {i/steps*100:.2f}%')
-            self.rout[:, i + 1], self.iout[:, i + 1] = self.evolve(self.rout[:, i], self.iout[:, i])
+        save_idx = 0
+
+        temp_rout = self.rout[:,0]
+        temp_iout = self.iout[:,0]
+
+        for i in range(steps):
+            if i % 100 == 0:
+                print(f'Step={i}')
+            temp_rout, temp_iout = self.evolve(temp_rout, temp_iout)
+            if i % self.save_interval == 0:
+                self.rout[:,save_idx] = temp_rout
+                self.iout[:,save_idx] = temp_iout
+                save_idx += 1
+
         return self.rout, self.iout
 
     def plot_field_intensity(self):
@@ -103,7 +135,8 @@ class GinzburgLandauIntegrator:
 
     def plot_time_steps(self):
         from matplotlib.cm import get_cmap
-        time_steps = [0, int(steps/4), int(steps/2), int(3*steps/4), int(steps)-1]
+        time_steps = [0, int(self.num_saves/4), int(self.num_saves/2),
+                               int(3*self.num_saves/4), int(self.num_saves)-1]
         cmap = get_cmap('viridis')
         colors = cmap(np.linspace(0, 1, len(time_steps)))
         plt.figure(figsize=(10, 6))
@@ -150,17 +183,17 @@ if __name__ == "__main__":
     # Try one
     N = 256
     dt = 1e-5  # Smaller time step
-    steps = int(1e3 // dt)
-    #  steps = 10000
+    steps = int(1e-3 // dt)
+    steps = 100_000
 
     mu = 0.45
     nu = 1.0
     alpha = 1.0
-    gamma0 = 0.90
+    gamma0 = 0.93
     sigma = 16.0
     params = (mu, nu, alpha, gamma0, sigma)
 
-    integrator = GinzburgLandauIntegrator(N, dt, params, x_lim=8)
+    integrator = GinzburgLandauIntegrator(N, dt, params, x_lim=8, save_interval=100)
     integrator.initialize_fields()
     rout, iout = integrator.integrate(steps)
     np.save('rout.npy', rout)
