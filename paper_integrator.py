@@ -86,7 +86,8 @@ class GinzburgLandauIntegrator:
 
     def integrate(self, steps):
         for i in range(int(steps) - 1):  # Temporal evolution
-            print(f'Step={i}')
+            if i % 1000 == 0:
+                print(f'Step={i}/{steps} {i/steps*100:.2f}%')
             self.rout[:, i + 1], self.iout[:, i + 1] = self.evolve(self.rout[:, i], self.iout[:, i])
         return self.rout, self.iout
 
@@ -97,6 +98,7 @@ class GinzburgLandauIntegrator:
         plt.xlabel('x')
         plt.ylabel('Step')
         plt.title(fr'$\gamma_0=${self.gamma_0}')
+        plt.savefig('intensity.png')
         plt.show()
 
     def plot_time_steps(self):
@@ -110,6 +112,7 @@ class GinzburgLandauIntegrator:
             plt.plot(field_intensity + i * 0.05, label=f'Time step = {t}', color=color)
         plt.xlabel('Spatial Coordinate')
         plt.ylabel('Field Intensity (offset)')
+        plt.savefig('time_steps.png')
         plt.show()
 
     def save_dataset(self, data, filename):
@@ -147,7 +150,7 @@ if __name__ == "__main__":
     # Try one
     N = 256
     dt = 1e-5  # Smaller time step
-    steps = int(6e3 // dt)
+    steps = int(1e3 // dt)
     #  steps = 10000
 
     mu = 0.45
@@ -160,6 +163,8 @@ if __name__ == "__main__":
     integrator = GinzburgLandauIntegrator(N, dt, params, x_lim=8)
     integrator.initialize_fields()
     rout, iout = integrator.integrate(steps)
+    np.save('rout.npy', rout)
+    np.save('iout.npy', iout)
 
     # Plot
     integrator.plot_field_intensity()
