@@ -86,26 +86,6 @@ class GinzburgLandauIntegrator:
         iout = np.fft.irfft(imf, n=self.N)
         return rout, iout
 
-    #  def integrate(self, steps):
-        #  for i in range(int(steps) - 1):  # Temporal evolution
-            #  if i % 1000 == 0:
-                #  print(f'Step={i}/{steps} {i/steps*100:.2f}%')
-            #  self.rout[:, i + 1], self.iout[:, i + 1] = self.evolve(self.rout[:, i], self.iout[:, i])
-        #  return self.rout, self.iout
-
-    #  def integrate(self, steps):
-        #  temp_rout = self.rout[:, 0]
-        #  temp_iout = self.iout[:, 0]
-
-        #  for i in range(steps-1):
-            #  if i % 100 == 0:
-                #  print(f'Step={i}')
-            #  temp_rout, temp_iout = self.evolve(temp_rout, temp_iout)
-            #  if i % self.save_interval == 0:
-                #  self.rout[:, i + 1], self.iout[:, i + 1] = temp_rout, temp_iout
-
-            #  return self.rout, self.iout
-
     def integrate(self, steps):
         save_idx = 0
 
