@@ -112,7 +112,7 @@ class GinzburgLandauIntegrator:
         temp_rout = self.rout[:,0]
         temp_iout = self.iout[:,0]
 
-        for i in range(steps):
+        for i in range(steps-self.save_interval):
             if i % 100 == 0:
                 print(f'Step={i}')
             temp_rout, temp_iout = self.evolve(temp_rout, temp_iout)
@@ -183,17 +183,17 @@ if __name__ == "__main__":
     # Try one
     N = 256
     dt = 1e-5  # Smaller time step
-    steps = int(1e-3 // dt)
-    steps = 100_000
+    steps = int(1e1 // dt)
+    #  steps = 100_000
 
     mu = 0.45
     nu = 1.0
     alpha = 1.0
-    gamma0 = 0.93
+    gamma0 = 0.55
     sigma = 16.0
     params = (mu, nu, alpha, gamma0, sigma)
 
-    integrator = GinzburgLandauIntegrator(N, dt, params, x_lim=8, save_interval=100)
+    integrator = GinzburgLandauIntegrator(N, dt, params, x_lim=8, save_interval=1000)
     integrator.initialize_fields()
     rout, iout = integrator.integrate(steps)
     np.save('rout.npy', rout)
